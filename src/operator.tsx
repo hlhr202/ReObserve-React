@@ -1,5 +1,5 @@
 import React from "react";
-import { Subject, combineLatest, OperatorFunction, UnaryFunction, Observable } from "rxjs";
+import { Subject, combineLatest, OperatorFunction, UnaryFunction, Observable, Subscription } from "rxjs";
 import { map, startWith, mapTo } from "rxjs/operators";
 import ReObserve, { dispatch, fromAction } from "@hlhr202/reobserve";
 import ReactDOM from "react-dom";
@@ -8,43 +8,32 @@ import { IActionEmit } from "../node_modules/@hlhr202/reobserve/lib/type";
 
 declare module "rxjs/internal/Observable" {
 	interface Observable<T> {
-		pipe<A>(op1: OperatorFunction<T, A>): Observable<A>;
-		pipe<A, D extends T>(
-			op1: (data: D, props: A) => React.Props<React.ComponentClass<A>> & A
-		): React.ComponentClass<A>;
+		pipe<A>(operator: (source: Observable<T>) => React.ComponentClass<A>): React.ComponentClass<A>;
 	}
 }
 
-const toComponent: <T, A>(f: (data: T, props: A) => React.ReactNode) => UnaryFunction<T, A> = f => source => {
-	class Component extends React.PureComponent<any> {
-		mounted: boolean = false;
-		subject = new Subject();
-		view: React.ReactNode = null;
-		view$ = combineLatest(this.subject.pipe(startWith(this.props)), source as any).pipe(
-			map(([props, data]: any) => f(data, props))
-		);
-		handleView = (view: React.ReactNode) => {
-			this.view = view;
-			if (this.mounted) this.forceUpdate();
-		};
-		subscription = this.view$.subscribe(this.handleView);
-		componentDidMount() {
-			this.mounted = true;
-		}
-		componentWillUnmount() {
-			this.mounted = false;
-			this.subscription.unsubscribe();
-		}
-		componentDidUpdate(prevProps: any) {
-			if (prevProps !== this.props) {
-				this.subject.next(this.props);
+const toRender: <T, A>(
+	render: (data: T, props: React.Props<React.ComponentClass<A>> & A) => React.ReactNode
+) => UnaryFunction<Observable<T>, React.ComponentClass<A>> = renderFunction => source => {
+	class Component extends React.PureComponent<any, { data?: any }> {
+		private subscription!: Subscription;
+		constructor(props: any) {
+			super(props)
+			this.state = {
+				data: undefined
 			}
 		}
+		componentDidMount() {
+			this.subscription = source.subscribe(data => this.setState({ data }));
+		}
+		componentWillUnmount() {
+			this.subscription.unsubscribe();
+		}
 		render() {
-			return this.view;
+			return this.state.data ? renderFunction(this.state.data, this.props as any) : null;
 		}
 	}
-	// Component.displayName = getDisplayName(f)
+	(Component as any).displayName = (renderFunction as any).displayName || (renderFunction as any).name || "Component";
 	return Component as any;
 };
 
@@ -53,15 +42,15 @@ interface INumbers {
 }
 
 const number$ = new ReObserve<INumbers>({ numbers: [0, 1, 2, 3] })
-	.mergeReduce(fromAction("INCREMENT").pipe(map(action => action.payload)), (curr, payload) => ({
+	.mergeReduce(fromAction("INCREMENT").pipe<number[]>(map(action => action.payload)), (curr, payload) => ({
 		numbers: curr.numbers.map((n, i) => n + payload[i])
 	}))
-	.mergeReduce(fromAction("DECREMENT").pipe(map(action => action.payload)), (curr, payload) => ({
+	.mergeReduce(fromAction("DECREMENT").pipe<number[]>(map(action => action.payload)), (curr, payload) => ({
 		numbers: curr.numbers.map((n, i) => n - payload[i])
 	}));
 
-const App = number$.asObservable().pipe<{ testProps: string }, INumbers>(
-	toComponent((state, props) => (
+const App = number$.asObservable().pipe<{ testProps: string }>(
+	toRender((state, props) => (
 		<>
 			<button onClick={() => dispatch({ type: "DECREMENT", payload: [1, 2, 3, 4] })}>-</button>
 			{state.numbers.map((n, i) => (
@@ -74,4 +63,4 @@ const App = number$.asObservable().pipe<{ testProps: string }, INumbers>(
 
 ReactDOM.render(<App testProps="Test" />, document.getElementById("root"));
 
-export default toComponent;
+export default toRender;
