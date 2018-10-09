@@ -1,13 +1,17 @@
 import React from "react";
 import { Subject, combineLatest, OperatorFunction, UnaryFunction, Observable } from "rxjs";
 import { map, startWith, mapTo } from "rxjs/operators";
-import ReObserve from "@hlhr202/reobserve";
+import ReObserve, { dispatch, fromAction } from "@hlhr202/reobserve";
 import ReactDOM from "react-dom";
+import { IActionEmit } from "../node_modules/@hlhr202/reobserve/lib/type";
 // import { getDisplayName } from '../shared'
 
 declare module "rxjs/internal/Observable" {
 	interface Observable<T> {
-		pipe<A>(op1: (data: T, props: A) => React.Props<React.ComponentClass<A>> & A): React.ComponentClass<A>;
+		pipe<A>(op1: OperatorFunction<T, A>): Observable<A>;
+		pipe<A, D extends T>(
+			op1: (data: D, props: A) => React.Props<React.ComponentClass<A>> & A
+		): React.ComponentClass<A>;
 	}
 }
 
@@ -44,21 +48,26 @@ const toComponent: <T, A>(f: (data: T, props: A) => React.ReactNode) => UnaryFun
 	return Component as any;
 };
 
-interface ICounter {
-	count: number;
+interface INumbers {
+	numbers: Array<number>;
 }
 
-const counter$ = new ReObserve<ICounter>({ count: 0 })
-	.mergeReduce(ReObserve.fromAction("INCREMENT").pipe(mapTo(1)), (curr, next) => ({ count: curr.count + next }))
-	.mergeReduce(ReObserve.fromAction("DECREMENT").pipe(mapTo(1)), (curr, next) => ({ count: curr.count - next }));
+const number$ = new ReObserve<INumbers>({ numbers: [0, 1, 2, 3] })
+	.mergeReduce(fromAction("INCREMENT").pipe(map(action => action.payload)), (curr, payload) => ({
+		numbers: curr.numbers.map((n, i) => n + payload[i])
+	}))
+	.mergeReduce(fromAction("DECREMENT").pipe(map(action => action.payload)), (curr, payload) => ({
+		numbers: curr.numbers.map((n, i) => n - payload[i])
+	}));
 
-const App = counter$.asObservable().pipe<{ testProps: string }>(
-	toComponent((counter, props) => (
+const App = number$.asObservable().pipe<{ testProps: string }, INumbers>(
+	toComponent((state, props) => (
 		<>
-			<div>{props.testProps}</div>
-			<button onClick={() => ReObserve.dispatch({ type: "DECREMENT" })}>-</button>
-			<div>{counter.count}</div>
-			<button onClick={() => ReObserve.dispatch({ type: "INCREMENT" })}>+</button>
+			<button onClick={() => dispatch({ type: "DECREMENT", payload: [1, 2, 3, 4] })}>-</button>
+			{state.numbers.map((n, i) => (
+				<span key={i}> {n} </span>
+			))}
+			<button onClick={() => dispatch({ type: "INCREMENT", payload: [1, 2, 3, 4] })}>+</button>
 		</>
 	))
 );
